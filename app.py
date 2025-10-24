@@ -5,6 +5,8 @@ from threading import Condition
 import threading, subprocess
 import argparse
 import importlib.util
+import RPi.GPIO as PiGPIO
+
 
 # Flask imports
 from flask import Flask, render_template, request, jsonify, Response, send_file, abort, session, redirect, url_for
@@ -1013,7 +1015,35 @@ class GPIO:
     def __init__(self, config_path="gpio_map.json"):
         self.config_path = config_path
         self.gpio_pins = self.load_config()
+        self.button = self.search_for_button()
+        self.timer = 0
+        self.maxSeconds = 3
 
+    def get_button_status(self):
+        return (PiGPIO.input(self.button.get("pin")) == PiGPIO.HIGH)
+    
+    def trigger_camera(self,pin):
+        if ( (time.time() - self.timer) > self.maxSeconds ):
+            print("Detected {}!!".format(pin))
+            capture_still(0)
+        self.timer = time.time()
+        
+
+    def configure_button(self, pin_number):
+        PiGPIO.setmode(PiGPIO.BOARD)
+        PiGPIO.setup(pin_number, PiGPIO.IN, pull_up_down=PiGPIO.PUD_UP)
+        PiGPIO.add_event_detect(pin_number, PiGPIO.RISING, callback=self.trigger_camera, bouncetime=100)
+        print(f"Configured GPIO pin {pin_number} as button input")
+    def search_for_button(self):
+        for pin in self.gpio_pins:
+            if pin.get("type") == "button":
+                if pin.get("status") == 'disabled':
+                    print("Invalid pin for button ({})".format(pin.get("label")))
+                else:
+                    print("Found button pin ({})".format(pin.get("label")))
+                    self.configure_button(pin.get("pin"))
+                    return pin
+        return None
     def load_config(self):
         try:
             with open(self.config_path, "r") as f:
@@ -1696,6 +1726,11 @@ def get_profiles():
 
 # Initialize the gallery with the upload folder
 gpio = GPIO()
+
+@app.route('/gpio_get', methods=['GET'])
+def getGPio():
+    ret = gpio.get_button_status()
+    return jsonify(success=ret)
 
 @app.route("/gpio_setup")
 def gpio_setup():
